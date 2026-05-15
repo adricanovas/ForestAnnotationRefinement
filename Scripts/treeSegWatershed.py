@@ -10,88 +10,89 @@ from pathlib import Path
 from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
 import pandas as pd
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.spatial import Delaunay
 import alphashape
 from scipy.interpolate import NearestNDInterpolator
 
 # %% [markdown]
-# # Creación puntos arbol y suelo
+# # Tree and terrain point creation
 
 # %%
 
 def get_variable_window_size(h):
-    """Calcula el diámetro de la ventana (en metros) basado en la altura."""
+    """Computes the window diameter (in metres) based on height."""
     width = 3 + 0.00901 * (h**2)
     #width = 1.5 + 0.05 * h
     return width
 
-def apply_vwf(chm, resolucion, altura_min_arbol, distancia_minima):
-    """Aplica el filtro de ventana variable para detectar picos."""
-    # 1. Identificar candidatos iniciales (máximos locales rápidos)
-    local_max = ndi.maximum_filter(chm, size=distancia_minima) == chm
-    local_max = local_max & (chm > altura_min_arbol)
-    
-    y_coords, x_coords = np.where(local_max)
-    picos_finales = []
+def apply_vwf(chm, resolution, min_tree_height, min_distance):
+    """Applies the variable window filter to detect peaks."""
+    # 1. Identify initial candidates (fast local maxima)
+    local_max = ndi.maximum_filter(chm, size=min_distance) == chm
+    local_max = local_max & (chm > min_tree_height)
 
-    # 2. Filtrar candidatos usando la ventana variable
-    # Ordenamos descendente por altura
+    y_coords, x_coords = np.where(local_max)
+    final_peaks = []
+
+    # 2. Filter candidates using the variable window
+    # Sort descending by height
     if len(y_coords) > 0:
         vals = chm[y_coords, x_coords]
         sorted_indices = np.argsort(vals)[::-1]
-        
+
         for i in sorted_indices:
             y, x = y_coords[i], x_coords[i]
             h = chm[y, x]
-            
-            # Calcular radio
+
+            # Compute radius
             window_width_m = get_variable_window_size(h)
-            radius_px = int((window_width_m) / resolucion)
+            radius_px = int((window_width_m) / resolution)
             if radius_px < 1: radius_px = 1
-            
-            # Límites
+
+            # Bounds
             y_min, y_max = max(0, y - radius_px), min(chm.shape[0], y + radius_px + 1)
             x_min, x_max = max(0, x - radius_px), min(chm.shape[1], x + radius_px + 1)
-            
+
             window = chm[y_min:y_max, x_min:x_max]
-            
-            # Máscara circular
-            y_indices, x_indices = np.ogrid[y_min - y : y_max - y, x_min - x : x_max - x]
+
+            # Circular mask
+            y_indices, x_indices = np.ogrid[y_min - y: y_max - y, x_min - x: x_max - x]
             dist_sq = y_indices**2 + x_indices**2
             mask_circular = dist_sq <= radius_px**2
-            
-            # Comprobación: si el punto central es el máximo dentro del círculo
-            window_circular = np.where(mask_circular, window, -np.inf) # Usar -inf es más seguro que -1
-            
+
+            # Check: is the central point the maximum inside the circle?
+            window_circular = np.where(mask_circular, window, -np.inf)  # -inf is safer than -1
+
             if h == np.max(window_circular):
-                picos_finales.append([y, x])
-                
-    return np.array(picos_finales)
+                final_peaks.append([y, x])
+
+    return np.array(final_peaks)
 
 # %%
-def read_las(ruta_las):
+def read_las(las_path):
     """
     Reads a LAS file and returns the point cloud as a NumPy array.
 
-    :param ruta_las: Path to the LAS file.
+    :param las_path: Path to the LAS file.
     :return: NumPy array of shape (N, 3) containing the point cloud coordinates.
     """
-    las = laspy.read(ruta_las)
+    las = laspy.read(las_path)
     points = np.vstack((las.x, las.y, las.z)).transpose()
     return points
 
 # %%
-def segment_terrain_points(points, resolution = 0.5, altura_min_arbol = 4.0):
+def segment_terrain_points(points, resolution=0.5, min_tree_height=4.0):
     """
-    Receives a point cloud and segments terrain points using CSF, then normalizes heights to create a CHM.
+    Receives a point cloud and segments terrain points using CSF,
+    then normalizes heights to create a CHM.
     """
-    # 1. MDT y NORMALIZACIÓN DE ALTURA
+    # 1. DTM and height normalization
     min_x, max_x = np.min(points[:, 0]), np.max(points[:, 0])
     min_y, max_y = np.min(points[:, 1]), np.max(points[:, 1])
 
-    # Crear grid asegurando que cubra todo
+    # Build grid ensuring full coverage
     grid_x, grid_y = np.mgrid[min_x:max_x:resolution, min_y:max_y:resolution]
 
     csf = CSF.CSF()
@@ -104,47 +105,48 @@ def segment_terrain_points(points, resolution = 0.5, altura_min_arbol = 4.0):
     ground_indices = CSF.VecInt(); non_ground_indices = CSF.VecInt()
     csf.do_filtering(ground_indices, non_ground_indices)
 
-    puntos_suelo_csf = points[ground_indices]
+    csf_ground_points = points[ground_indices]
 
-    mdt_interpolado = griddata(
-        points=puntos_suelo_csf[:, :2],
-        values=puntos_suelo_csf[:, 2],
+    interpolated_dtm = griddata(
+        points=csf_ground_points[:, :2],
+        values=csf_ground_points[:, 2],
         xi=(grid_x, grid_y),
         method='linear',
     )
 
-    if np.isnan(mdt_interpolado).any():
-        mask_nan = np.isnan(mdt_interpolado)
-        rellenador = NearestNDInterpolator(puntos_suelo_csf[:, :2], puntos_suelo_csf[:, 2])
-        coords_nan = np.vstack((grid_x[mask_nan], grid_y[mask_nan])).T
-        mdt_interpolado[mask_nan] = rellenador(coords_nan)
+    if np.isnan(interpolated_dtm).any():
+        nan_mask = np.isnan(interpolated_dtm)
+        nan_filler = NearestNDInterpolator(csf_ground_points[:, :2], csf_ground_points[:, 2])
+        nan_coords = np.vstack((grid_x[nan_mask], grid_y[nan_mask])).T
+        interpolated_dtm[nan_mask] = nan_filler(nan_coords)
 
-    # Nota: Guardar terrain_points es opcional, lo dejo comentado para limpieza
-    terrain_points = np.vstack((grid_x.ravel(), grid_y.ravel(), mdt_interpolado.ravel())).T
+    # terrain_points is saved optionally; kept for reference
+    terrain_points = np.vstack((grid_x.ravel(), grid_y.ravel(), interpolated_dtm.ravel())).T
     np.save("terrain_points.npy", terrain_points)
 
-    # Índices seguros
-    idx_x_all = np.clip(((points[:, 0] - min_x) / resolution).astype(int), 0, mdt_interpolado.shape[0] - 1)
-    idx_y_all = np.clip(((points[:, 1] - min_y) / resolution).astype(int), 0, mdt_interpolado.shape[1] - 1)
+    # Safe indices (clamped)
+    idx_x_all = np.clip(((points[:, 0] - min_x) / resolution).astype(int), 0, interpolated_dtm.shape[0] - 1)
+    idx_y_all = np.clip(((points[:, 1] - min_y) / resolution).astype(int), 0, interpolated_dtm.shape[1] - 1)
 
-    z_suelo_puntos = mdt_interpolado[idx_x_all, idx_y_all]
-    altura_sobre_suelo = points[:, 2] - z_suelo_puntos
+    ground_z = interpolated_dtm[idx_x_all, idx_y_all]
+    above_ground_height = points[:, 2] - ground_z
 
-    mask_candidatos = altura_sobre_suelo > altura_min_arbol
-    puntos_arbol_candidatos = points[mask_candidatos]
-    alturas_candidatos = altura_sobre_suelo[mask_candidatos]
-    puntos_resto = points[~mask_candidatos]
+    candidate_mask = above_ground_height > min_tree_height
+    candidate_tree_points = points[candidate_mask]
+    candidate_heights = above_ground_height[candidate_mask]
+    remaining_points = points[~candidate_mask]
 
-    return puntos_arbol_candidatos, alturas_candidatos, puntos_resto, grid_x, grid_y, idx_x_all, idx_y_all, mask_candidatos, min_x, min_y, altura_sobre_suelo, puntos_suelo_csf
+    return candidate_tree_points, candidate_heights, remaining_points, grid_x, grid_y, idx_x_all, idx_y_all, candidate_mask, min_x, min_y, above_ground_height, csf_ground_points
 
 # %%
-def create_chm(puntos_arbol_candidatos, alturas_candidatos, grid_x, grid_y):
+def create_chm(candidate_tree_points, candidate_heights, grid_x, grid_y):
     """
-    Creates a Canopy Height Model (CHM) by interpolating candidate tree points and applying a Gaussian filter for smoothing.
+    Creates a Canopy Height Model (CHM) by interpolating candidate tree points
+    and applying a Gaussian filter for smoothing.
     """
     chm_grid = griddata(
-        points=puntos_arbol_candidatos[:, :2],
-        values=alturas_candidatos,
+        points=candidate_tree_points[:, :2],
+        values=candidate_heights,
         xi=(grid_x, grid_y),
         method='linear',
         fill_value=0
@@ -155,56 +157,57 @@ def create_chm(puntos_arbol_candidatos, alturas_candidatos, grid_x, grid_y):
     return chm_grid, chm_smooth
 
 # %%
-def apply_watershed(resolucion, altura_min_arbol, chm_smooth, idx_x_all, idx_y_all, mask_candidatos, puntos_arbol_candidatos):
+def apply_watershed(resolution, min_tree_height, chm_smooth, idx_x_all, idx_y_all, candidate_mask, candidate_tree_points):
     """
-    Uses the smoothed CHM to apply the watershed algorithm for initial tree segmentation, then assigns labels to candidate points.
+    Uses the smoothed CHM to apply the watershed algorithm for initial tree
+    segmentation, then assigns labels to candidate points.
     """
-    distancia_min_copas_metros = 3.0
-    dist_px = int(distancia_min_copas_metros / resolucion)
+    min_crown_dist_m = 3.0
+    dist_px = int(min_crown_dist_m / resolution)
 
-    coords_picos = apply_vwf(chm_smooth, resolucion, altura_min_arbol, dist_px)
+    peak_coords = apply_vwf(chm_smooth, resolution, min_tree_height, dist_px)
 
-    mask_watershed = chm_smooth > altura_min_arbol
+    mask_watershed = chm_smooth > min_tree_height
     markers = np.zeros(chm_smooth.shape, dtype=int)
 
-    if len(coords_picos) > 0:
-        for i, (y, x) in enumerate(coords_picos):
+    if len(peak_coords) > 0:
+        for i, (y, x) in enumerate(peak_coords):
             markers[y, x] = i + 1
 
     labels_raster = watershed(-chm_smooth, markers, mask=mask_watershed)
 
+    # Assign raster labels to 3D points
+    idx_x_cand = idx_x_all[candidate_mask]
+    idx_y_cand = idx_y_all[candidate_mask]
+    labels_points = labels_raster[idx_x_cand, idx_y_cand]
 
-    # Asignar etiquetas del raster a los puntos 3D
-    idx_x_cand = idx_x_all[mask_candidatos]
-    idx_y_cand = idx_y_all[mask_candidatos]
-    labels_puntos = labels_raster[idx_x_cand, idx_y_cand]
+    df_candidates = pd.DataFrame(candidate_tree_points, columns=['X', 'Y', 'Z'])
+    df_candidates['label'] = labels_points
+    # Label 0 is background/non-tree in watershed
+    df_candidates.loc[df_candidates['label'] == 0, 'label'] = -1
 
-    df_candidatos = pd.DataFrame(puntos_arbol_candidatos, columns=['X', 'Y', 'Z'])
-    df_candidatos['label'] = labels_puntos
-    # Etiqueta 0 es fondo/no árbol en watershed
-    df_candidatos.loc[df_candidatos['label'] == 0, 'label'] = -1
+    unique_labels_final = df_candidates['label'].unique()
+    valid_tree_indices = []
+    rejected_indices = []
 
-    unique_labels_final = df_candidatos['label'].unique()
-    indices_arboles_validos = []
-    indices_falsos = []
+    # Extract noise points
+    df_noise_ws = df_candidates[df_candidates['label'] == -1]
+    noise_points = df_noise_ws[['X', 'Y', 'Z']].values
 
-    # Extraer ruido
-    df_ruido_ws = df_candidatos[df_candidatos['label'] == -1]
-    puntos_ruido = df_ruido_ws[['X', 'Y', 'Z']].values
-
-    return df_candidatos, puntos_ruido, labels_raster
+    return df_candidates, noise_points, labels_raster
 
 # %%
-def analyze_geometric_features(df_candidatos, umbral_esfericidad):
+def analyze_geometric_features(df_candidates, sphericity_threshold):
     """
-    Checks the geometric features of the clusters obtained from watershed to filter out non-tree clusters based on their sphericity.
+    Checks the geometric features of watershed clusters to filter out
+    non-tree clusters based on their sphericity.
     """
-    indices_arboles_validos = []
-    lista_falsos = []
-    
-    grupos = df_candidatos[df_candidatos['label'] != -1].groupby('label')
+    valid_tree_indices = []
+    rejected_list = []
 
-    for label, group in grupos:
+    groups = df_candidates[df_candidates['label'] != -1].groupby('label')
+
+    for label, group in groups:
         cluster_3d = group[['X', 'Y', 'Z']].values
         if len(cluster_3d) < 5: continue
 
@@ -212,140 +215,138 @@ def analyze_geometric_features(df_candidatos, umbral_esfericidad):
             cov = np.cov(cluster_3d, rowvar=False)
             eigenvalues, _ = np.linalg.eigh(cov)
             l1, l2, l3 = np.sort(eigenvalues)
-            esfericidad = l1 / l3 if l3 > 0 else 0
+            sphericity = l1 / l3 if l3 > 0 else 0
 
-            if esfericidad > umbral_esfericidad:
-                indices_arboles_validos.append(cluster_3d)
+            if sphericity > sphericity_threshold:
+                valid_tree_indices.append(cluster_3d)
             else:
-                lista_falsos.append(cluster_3d)
+                rejected_list.append(cluster_3d)
         except:
-            lista_falsos.append(cluster_3d)
+            rejected_list.append(cluster_3d)
 
-    # Convertimos los descartados en un solo bloque de puntos para evitar huecos
-    puntos_descartados = np.vstack(lista_falsos) if lista_falsos else np.empty((0, 3))
-    return indices_arboles_validos, puntos_descartados
+    # Merge rejected clusters into one point block to avoid visualization gaps
+    rejected_points = np.vstack(rejected_list) if rejected_list else np.empty((0, 3))
+    return valid_tree_indices, rejected_points
 
 # %%
-def create_csv(indices_arboles_validos, chm_grid, min_x, min_y, resolucion):
+def create_csv(valid_tree_indices, chm_grid, min_x, min_y, resolution):
     """
-    Creates a final DataFrame with tree points and their heights, then saves it as a CSV. Also prepares data for visualization.
+    Creates a final DataFrame with tree points and their heights, then saves it
+    as a CSV. Also prepares data for visualization.
     """
-    # --- OPTIMIZACIÓN: Crear DataFrame final sin bucle lento ---
-    lista_dfs_arboles = []
-    puntos_vis_arbol = []
-    colores_vis_arbol = []
+    # --- OPTIMIZATION: build final DataFrame without a slow loop ---
+    tree_dfs = []
+    tree_vis_points = []
+    tree_vis_colors = []
 
-    for idx, cluster in enumerate(indices_arboles_validos):
+    for idx, cluster in enumerate(valid_tree_indices):
         df_cluster = pd.DataFrame(cluster, columns=['X', 'Y', 'Z'])
-        
-        # VECTORIZACIÓN DE ALTURAS (Mucho más rápido)
-        # Convertir coord X,Y a indices de grilla
-        rows = np.clip(((cluster[:, 0] - min_x) / resolucion).astype(int), 0, chm_grid.shape[0]-1)
-        cols = np.clip(((cluster[:, 1] - min_y) / resolucion).astype(int), 0, chm_grid.shape[1]-1)
-        
-        # Extracción directa
-        alturas_relativas = chm_grid[rows, cols]
-        
-        df_cluster['Tree_Height'] = alturas_relativas
+
+        # VECTORIZED HEIGHT LOOKUP (much faster)
+        # Convert X,Y coords to grid indices
+        rows = np.clip(((cluster[:, 0] - min_x) / resolution).astype(int), 0, chm_grid.shape[0]-1)
+        cols = np.clip(((cluster[:, 1] - min_y) / resolution).astype(int), 0, chm_grid.shape[1]-1)
+
+        # Direct extraction
+        relative_heights = chm_grid[rows, cols]
+
+        df_cluster['Tree_Height'] = relative_heights
         df_cluster['label'] = idx
-        lista_dfs_arboles.append(df_cluster)
-        
-        # Preparar visualización
-        puntos_vis_arbol.append(cluster)
+        tree_dfs.append(df_cluster)
+
+        # Prepare visualization
+        tree_vis_points.append(cluster)
         color = np.random.rand(3)
-        colores_vis_arbol.append(np.tile(color, (len(cluster), 1)))
+        tree_vis_colors.append(np.tile(color, (len(cluster), 1)))
 
-    if lista_dfs_arboles:
-        arbolesXYZ = pd.concat(lista_dfs_arboles, ignore_index=True)
-        arbolesXYZ.to_csv("arboles_detectados.csv", index=False)
-        
-        # Unificar las listas en un solo array ---
-        puntos_vis_arbol = np.vstack(puntos_vis_arbol) 
-        colores_vis_arbol = np.vstack(colores_vis_arbol)
+    if tree_dfs:
+        trees_xyz = pd.concat(tree_dfs, ignore_index=True)
+        trees_xyz.to_csv("trees_detected.csv", index=False)
+
+        # Merge lists into single arrays
+        tree_vis_points = np.vstack(tree_vis_points)
+        tree_vis_colors = np.vstack(tree_vis_colors)
     else:
-        arbolesXYZ = pd.DataFrame()
-        puntos_vis_arbol = np.array([])
-        colores_vis_arbol = np.array([])
+        trees_xyz = pd.DataFrame()
+        tree_vis_points = np.array([])
+        tree_vis_colors = np.array([])
 
-    return arbolesXYZ, puntos_vis_arbol, colores_vis_arbol
+    return trees_xyz, tree_vis_points, tree_vis_colors
 
 # %%
-def prepare_visualization_data(indices_arboles_validos, chm_grid, min_x, min_y, resolucion):
+def prepare_visualization_data(valid_tree_indices, chm_grid, min_x, min_y, resolution):
     """
-    Prepares the data for visualization by creating a DataFrame for tree points and their heights, and also compiles the points and colors for Open3D visualization.
+    Prepares the data for visualization by creating a DataFrame for tree points
+    and their heights, and compiles points and colours for Open3D.
     """
-    lista_dfs = []
-    puntos_list = []
-    colores_list = []
+    dfs_list = []
+    points_list = []
+    colors_list = []
 
-    for idx, cluster in enumerate(indices_arboles_validos):
-        rows = np.clip(((cluster[:, 0] - min_x) / resolucion).astype(int), 0, chm_grid.shape[0]-1)
-        cols = np.clip(((cluster[:, 1] - min_y) / resolucion).astype(int), 0, chm_grid.shape[1]-1)
-        
+    for idx, cluster in enumerate(valid_tree_indices):
+        rows = np.clip(((cluster[:, 0] - min_x) / resolution).astype(int), 0, chm_grid.shape[0]-1)
+        cols = np.clip(((cluster[:, 1] - min_y) / resolution).astype(int), 0, chm_grid.shape[1]-1)
+
         df_cluster = pd.DataFrame(cluster, columns=['X', 'Y', 'Z'])
         df_cluster['Tree_Height'] = chm_grid[rows, cols]
         df_cluster['label'] = idx
-        lista_dfs.append(df_cluster)
-        
-        puntos_list.append(cluster)
+        dfs_list.append(df_cluster)
+
+        points_list.append(cluster)
         color = np.random.rand(3)
-        colores_list.append(np.tile(color, (len(cluster), 1)))
+        colors_list.append(np.tile(color, (len(cluster), 1)))
 
-    if lista_dfs:
-        arboles_df = pd.concat(lista_dfs, ignore_index=True)
-        # Unificamos aquí para evitar el ValueError en la visualización
-        puntos_vis = np.vstack(puntos_list)
-        colores_vis = np.vstack(colores_list)
+    if dfs_list:
+        trees_df = pd.concat(dfs_list, ignore_index=True)
+        # Merge here to avoid ValueError in visualization
+        vis_points = np.vstack(points_list)
+        vis_colors = np.vstack(colors_list)
     else:
-        arboles_df = pd.DataFrame()
-        puntos_vis = np.empty((0, 3))
-        colores_vis = np.empty((0, 3))
+        trees_df = pd.DataFrame()
+        vis_points = np.empty((0, 3))
+        vis_colors = np.empty((0, 3))
 
-    return arboles_df, puntos_vis, colores_vis
+    return trees_df, vis_points, vis_colors
 
-def combine_all_background_points(puntos_resto, puntos_ruido, puntos_descartados):
+def combine_all_background_points(remaining_points, noise_points, rejected_points):
     """
     Combines all points that are NOT trees into a single block to avoid gaps.
     """
-    bases = [puntos_resto]
-    if len(puntos_ruido) > 0: bases.append(puntos_ruido)
-    if len(puntos_descartados) > 0: bases.append(puntos_descartados)
+    bases = [remaining_points]
+    if len(noise_points) > 0: bases.append(noise_points)
+    if len(rejected_points) > 0: bases.append(rejected_points)
     return np.vstack(bases)
 
 
 # %%
-def clasify_tree_watershed(ruta_las_trees, ruta_las_terrain, resolucion=0.5, altura_min_arbol=4.0, umbral_esfericidad=0.05):
-    
-    # 1. Carga
-    points_trees = read_las(ruta_las_trees)
+def classify_tree_watershed(trees_las_path, terrain_las_path, resolution=0.5, min_tree_height=4.0, sphericity_threshold=0.05):
 
-    points_terreno = read_las(ruta_las_terrain)
-    points = np.vstack((points_trees, points_terreno))
+    # 1. Load
+    tree_points = read_las(trees_las_path)
+    terrain_points = read_las(terrain_las_path)
+    points = np.vstack((tree_points, terrain_points))
 
-    # 2. Terreno y Normalización
-    puntos_arbol_candidatos, alturas_candidatos, puntos_resto, grid_x, grid_y, idx_x_all, idx_y_all, mask_candidatos, min_x, min_y, altura_sobre_suelo, puntos_suelo_csf = segment_terrain_points(points, resolucion, altura_min_arbol)
+    # 2. Terrain and normalization
+    candidate_tree_points, candidate_heights, remaining_points, grid_x, grid_y, idx_x_all, idx_y_all, candidate_mask, min_x, min_y, above_ground_height, csf_ground_points = segment_terrain_points(points, resolution, min_tree_height)
 
     # 3. CHM
-    #chm_grid, chm_smooth = create_chm_fast(points, altura_sobre_suelo, gx, gy, resolucion) #Este método solo funciona con nubes de puntos densas, no con PNOA
-    chm_grid, chm_smooth = create_chm(puntos_arbol_candidatos, alturas_candidatos, grid_x, grid_y)
+    chm_grid, chm_smooth = create_chm(candidate_tree_points, candidate_heights, grid_x, grid_y)
 
-    # 4. Segmentación Watershed
-    df_candidatos, puntos_ruido, _ = apply_watershed(resolucion, altura_min_arbol, chm_smooth, idx_x_all, idx_y_all, mask_candidatos, puntos_arbol_candidatos)
+    # 4. Watershed segmentation
+    df_candidates, noise_points, _ = apply_watershed(resolution, min_tree_height, chm_smooth, idx_x_all, idx_y_all, candidate_mask, candidate_tree_points)
 
-    # 5. Filtrado Geométrico (Devuelve lista de árboles y bloque de descartados)
-    indices_validos, puntos_descartados = analyze_geometric_features(df_candidatos, umbral_esfericidad)
+    # 5. Geometric filtering (returns valid tree list and rejected point block)
+    valid_indices, rejected_points = analyze_geometric_features(df_candidates, sphericity_threshold)
 
-    # 6. Preparación de resultados (Ya unifica arrays de puntos y colores)
-    arboles_df, puntos_vis_arbol, colores_vis_arbol = prepare_visualization_data(indices_validos, chm_grid, min_x, min_y, resolucion)
+    # 6. Prepare results (unifies point and colour arrays)
+    trees_df, vis_tree_points, vis_tree_colors = prepare_visualization_data(valid_indices, chm_grid, min_x, min_y, resolution)
 
-    # 7. Unión de fondo (Evita los huecos en la visualización)
-    puntos_fondo = combine_all_background_points(puntos_resto, puntos_ruido, puntos_descartados)
+    # 7. Combine background (avoids visualization gaps)
+    background_points = combine_all_background_points(remaining_points, noise_points, rejected_points)
 
-    df_fondo = pd.DataFrame(puntos_fondo, columns=['X', 'Y', 'Z'])
-    df_fondo['label'] = -1
+    df_background = pd.DataFrame(background_points, columns=['X', 'Y', 'Z'])
+    df_background['label'] = -1
 
-    arboles_df = pd.concat([arboles_df, df_fondo], ignore_index=True)
+    trees_df = pd.concat([trees_df, df_background], ignore_index=True)
 
-
-    return arboles_df
-  
+    return trees_df

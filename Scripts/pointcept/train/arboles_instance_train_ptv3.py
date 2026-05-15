@@ -1,9 +1,9 @@
 _base_ = ["_base_/default_runtime.py"]
 
-# --- CONFIGURACIÓN GLOBAL ---
+# --- GLOBAL CONFIGURATION ---
 weight = None
 resume = False
-evaluate = True
+evaluate = False
 test_only = False
 seed = 456
 save_path = 'exp/arboles_ptv3_prueba2' 
@@ -24,10 +24,10 @@ use_tensorboard = True
 gradient_accumulation_steps = 2
 grad_max_norm = 5.0 
 
-# --- OPTIMIZADOR (Ajustado a Outdoor Settings) ---
-# El artículo usa Weight Decay de 5e-3 para outdoor 
+# --- OPTIMIZER (Adjusted for Outdoor Settings) ---
+# The paper uses Weight Decay of 5e-3 for outdoor settings 
 param_dicts = [dict(keyword='backbone', lr=0.0002)] 
-optimizer = dict(type='AdamW', lr=0.002, weight_decay=0.005) # Cambiado de 0.05 a 0.005 
+optimizer = dict(type='AdamW', lr=0.002, weight_decay=0.005) # Changed from 0.05 to 0.005 
 scheduler = dict(
     type='OneCycleLR',
     max_lr=[0.002, 0.0002],
@@ -37,23 +37,23 @@ scheduler = dict(
     final_div_factor=1000.0
 )
 
-# --- MÉTODOS ---
+# --- METHODS ---
 train = dict(type='DefaultTrainer')
 test = dict(type='InsSegTester', verbose=True)
 
-# --- MODELO (Arquitectura SOTA de PTv3) ---
+# --- MODEL (PTv3 SOTA Architecture) ---
 model = dict(
     type='PG-v1m2', 
     backbone=dict(
         type='PT-v3m1',
         in_channels=6,
         order=['z', 'z-trans', 'hilbert', 'hilbert-trans'],
-        stride=(2, 2, 2, 2),              # 4 reducciones
-        enc_depths=(2, 2, 2, 6, 2),       # 5 niveles (Correcto: 4+1)
-        enc_channels=(32, 64, 128, 256, 512), # 5 niveles
-        enc_num_head=(2, 4, 8, 16, 32),   # 5 niveles
-        enc_patch_size=(1024, 1024, 1024, 1024, 1024), # 5 niveles
-        dec_depths=(1, 1, 1, 1),          # El decoder siempre tiene la longitud de stride
+        stride=(2, 2, 2, 2),              # 4 downsampling steps
+        enc_depths=(2, 2, 2, 6, 2),       # 5 levels (correct: 4+1)
+        enc_channels=(32, 64, 128, 256, 512), # 5 levels
+        enc_num_head=(2, 4, 8, 16, 32),   # 5 levels
+        enc_patch_size=(1024, 1024, 1024, 1024, 1024), # 5 levels
+        dec_depths=(1, 1, 1, 1),          # decoder length always matches stride length
         dec_channels=(64, 64, 128, 256),
         dec_num_head=(4, 4, 8, 16),
         dec_patch_size=(1024, 1024, 1024, 1024),
@@ -72,8 +72,8 @@ model = dict(
     instance_ignore_index=-1,
 
     voxel_size=0.05,
-    cluster_thresh=2.0,           # Radio de 10 cm (Muy estricto, ideal para evitar fusiones)
-    cluster_min_points=120,       # Subimos un poco: obliga a que los grupos sean más densos
+    cluster_thresh=2.0,           # 10 cm radius (very strict, avoids over-merging)
+    cluster_min_points=120,       # Raised slightly: forces denser clusters
 
 
     
@@ -83,7 +83,7 @@ model = dict(
     ]
 )
 
-# --- DATOS ---
+# --- DATA ---
 data_root = 'data/tree_assets'
 data = dict(
     num_classes=2,
@@ -136,10 +136,10 @@ hooks = [
     #     type='SemSegEvaluator', 
     #     write_cls_iou=True
     # ),
-    dict(
-        type='InsSegEvaluator',
-        segment_ignore_index=(0,), 
-        instance_ignore_index=-1
-    ),
+    # dict(
+    #     type='InsSegEvaluator',
+    #     segment_ignore_index=(0,), 
+    #     instance_ignore_index=-1
+    # ),
     dict(type='CheckpointSaver', save_freq=10),
 ]

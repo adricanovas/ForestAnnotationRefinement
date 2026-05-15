@@ -1,9 +1,9 @@
 _base_ = ["_base_/default_runtime.py"]
 
-# --- CONFIGURACIÓN GLOBAL ---
+# --- GLOBAL CONFIGURATION ---
 weight = None
 resume = False
-evaluate = True
+evaluate = False
 test_only = False
 seed = 456
 save_path = 'exp/arboles_instance_oacnns' 
@@ -22,8 +22,8 @@ use_tensorboard = True
 gradient_accumulation_steps = 2
 grad_max_norm = 5.0
 
-# --- OPTIMIZADOR ---
-# Usamos el LR del ejemplo (0.001) que es el estándar para OA-CNNs
+# --- OPTIMIZER ---
+# LR from the example (0.001), the standard for OA-CNNs
 optimizer = dict(type='AdamW', lr=0.001, weight_decay=0.02)
 scheduler = dict(
     type='OneCycleLR',
@@ -34,29 +34,29 @@ scheduler = dict(
     final_div_factor=1000.0
 )
 
-# --- MÉTODOS ---
+# --- METHODS ---
 train = dict(type='DefaultTrainer')
 test = dict(type='InsSegTester', verbose=True)
 
-# --- MODELO (OA-CNNs adaptado a PointGroup) ---
+# --- MODEL (OA-CNNs adapted for PointGroup) ---
 model = dict(
     type='PG-v1m2', 
     backbone=dict(
         type="OACNNs",
-        in_channels=6,      # XYZ + Color/Intensidad
-        num_classes=0,      # Se mantiene en 0 para que PointGroup maneje las cabezas
-        embed_channels=64,  # Valor estándar en todas las versiones
-        enc_channels=[64, 64, 128, 256], # 4 etapas de codificación 
+        in_channels=6,      # XYZ + Colour/Intensity
+        num_classes=0,      # 0 means PointGroup handles the classification heads
+        embed_channels=64,  # Standard value across all versions
+        enc_channels=[64, 64, 128, 256], # 4 encoding stages 
         groups=[4, 4, 8, 16],
-        # --- VERSIÓN (S) ---
-        enc_depth=[2, 2, 2, 2],          # Solo 2 bloques por etapa para máxima velocidad 
+        # --- VERSION (S) ---
+        enc_depth=[3, 3, 9, 3],          # Only 2 blocks per stage for maximum speed
         # -------------------------------------
-        dec_channels=[256, 256, 256, 256], # Canales del decodificador alineados a las 4 etapas
-        dec_depth=[1, 1, 1, 1],          # El decodificador de OA-CNN es extremadamente ligero
+        dec_channels=[256, 256, 256, 256], # Decoder channels aligned to the 4 stages
+        dec_depth=[1, 1, 1, 1],          # The OA-CNN decoder is extremely lightweight
         point_grid_size=[[8, 12, 16, 16], [6, 9, 12, 12], [4, 6, 8, 8], [3, 4, 6, 6]],
         enc_num_ref=[16, 16, 16, 16],
     ),
-    backbone_out_channels=256, # Coincide con el último dec_channel de la OA-CNN
+    backbone_out_channels=256, # Must match the last dec_channel of OA-CNN
     semantic_num_classes=2,      
     semantic_ignore_index=-1,
     segment_ignore_index=(0,),   
@@ -64,8 +64,8 @@ model = dict(
     
 
     voxel_size=0.05,
-    cluster_thresh=2.0,           # Radio de 10 cm (Muy estricto, ideal para evitar fusiones)
-    cluster_min_points=120,       # Subimos un poco: obliga a que los grupos sean más densos
+    cluster_thresh=2.0,           # 10 cm radius (very strict, avoids over-merging)
+    cluster_min_points=120,       # Raised slightly: forces denser clusters
     
     criteria=[
         dict(type='CrossEntropyLoss', loss_weight=1.0, ignore_index=-1, weight=[1.0, 2.0]),
@@ -73,7 +73,7 @@ model = dict(
     ]
 )
 
-# --- DATOS ---
+# --- DATA ---
 data_root = 'data/tree_assets'
 data = dict(
     num_classes=2,
@@ -126,10 +126,10 @@ hooks = [
     #     type='SemSegEvaluator', 
     #     write_cls_iou=True
     # ),
-    dict(
-        type='InsSegEvaluator',
-        segment_ignore_index=(0,), 
-        instance_ignore_index=-1
-    ),
+    # dict(
+    #     type='InsSegEvaluator',
+    #     segment_ignore_index=(0,), 
+    #     instance_ignore_index=-1
+    # ),
     dict(type='CheckpointSaver', save_freq=10),
 ]

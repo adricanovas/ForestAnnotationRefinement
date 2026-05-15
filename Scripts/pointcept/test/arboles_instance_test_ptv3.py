@@ -1,6 +1,6 @@
 _base_ = ["_base_/default_runtime.py"]
 
-# --- CONFIGURACIÓN GLOBAL ---
+# --- GLOBAL CONFIGURATION ---
 weight = 'exp/train_ptv3_p1024_lr0.002/model/model_best.pth'
 resume = False
 evaluate = True
@@ -24,7 +24,7 @@ use_tensorboard = True
 gradient_accumulation_steps = 2
 grad_max_norm = 5.0 
 
-# --- OPTIMIZADOR ---
+# --- OPTIMIZER ---
 param_dicts = [dict(keyword='backbone', lr=0.0002)] 
 optimizer = dict(type='AdamW', lr=0.002, weight_decay=0.05)
 scheduler = dict(
@@ -36,24 +36,24 @@ scheduler = dict(
     final_div_factor=1000.0
 )
 
-# --- MÉTODOS ---
+# --- METHODS ---
 train = dict(type='DefaultTrainer')
 test = dict(type='InsSegTester', verbose=True)
 
 
-# --- MODELO (Configuración Binaria: Fondo vs Árbol) ---
+# --- MODEL (Binary Configuration: Background vs Tree) ---
 model = dict(
     type='PG-v1m2', 
     backbone=dict(
         type='PT-v3m1',
         in_channels=6,
         order=['z', 'z-trans', 'hilbert', 'hilbert-trans'],
-        stride=(2, 2, 2, 2),              # 4 reducciones
-        enc_depths=(2, 2, 2, 6, 2),       # 5 niveles (Correcto: 4+1)
-        enc_channels=(32, 64, 128, 256, 512), # 5 niveles
-        enc_num_head=(2, 4, 8, 16, 32),   # 5 niveles
-        enc_patch_size=(1024, 1024, 1024, 1024, 1024), # 5 niveles
-        dec_depths=(1, 1, 1, 1),          # El decoder siempre tiene la longitud de stride
+        stride=(2, 2, 2, 2),              # 4 downsampling steps
+        enc_depths=(2, 2, 2, 6, 2),       # 5 levels (correct: 4+1)
+        enc_channels=(32, 64, 128, 256, 512), # 5 levels
+        enc_num_head=(2, 4, 8, 16, 32),   # 5 levels
+        enc_patch_size=(1024, 1024, 1024, 1024, 1024), # 5 levels
+        dec_depths=(1, 1, 1, 1),          # decoder length always matches stride length
         dec_channels=(64, 64, 128, 256),
         dec_num_head=(4, 4, 8, 16),
         dec_patch_size=(1024, 1024, 1024, 1024),
@@ -72,10 +72,10 @@ model = dict(
     instance_ignore_index=-1,
     
 
-    # Post-proceso para Voxel 0.05
+    # Post-processing for Voxel 0.05
     voxel_size=0.05,
-    cluster_thresh=3.0,           # Radio de 10 cm (Muy estricto, ideal para evitar fusiones)
-    cluster_min_points=900,       # Subimos un poco: obliga a que los grupos sean más densos
+    cluster_thresh=3.0,           # 10 cm radius (very strict, avoids over-merging)
+    cluster_min_points=900,       # Raised slightly: forces denser clusters
     
     criteria=[
         dict(type='CrossEntropyLoss', loss_weight=1.0, ignore_index=-1, weight=[1.0, 1.0]),
@@ -83,7 +83,7 @@ model = dict(
     ]
 )
 
-# --- DATOS ---
+# --- DATA ---
 data_root = 'data/tree_assets'
 data = dict(
     num_classes=2,
@@ -152,7 +152,7 @@ data = dict(
 test = dict(
     type="InsSegTester",
     verbose=True,
-    segment_ignore_index=[0],   # Usamos corchetes para que sea una lista iterable
+    segment_ignore_index=[0],   # Square brackets make it a proper iterable
     instance_ignore_index=-1
 )
 
@@ -164,7 +164,7 @@ hooks = [
     dict(
         type='InsSegTester', 
         verbose=True,
-        # 0 es el índice del fondo/background tras el MapIndex
+        # 0 is the background index after MapIndex
         segment_ignore_index=(0,), 
         instance_ignore_index=-1 
         ),

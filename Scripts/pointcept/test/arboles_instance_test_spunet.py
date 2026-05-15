@@ -1,12 +1,12 @@
 _base_ = ["_base_/default_runtime.py"]
 
-# --- CONFIGURACIÓN GLOBAL ---
+# --- GLOBAL CONFIGURATION ---
 weight = 'exp/spunet_Original_Original/model/model_best.pth'
 resume = False
 evaluate = True
 test_only = True
 seed = 456
-save_path = 'exp/arboles_instance_test_spunet' # Carpeta para SpUNet
+save_path = 'exp/arboles_instance_test_spunet' # SpUNet output folder
 num_worker = 4 
 batch_size = 2 
 batch_size_val = 1
@@ -21,34 +21,34 @@ enable_wandb = False
 use_tensorboard = True
 gradient_accumulation_steps = 2
 
-# --- OPTIMIZADOR (Basado en el ejemplo de SpUNet) ---
-# Usamos SGD con momentum, que es el estándar para SparseUNet en Pointcept
+# --- OPTIMIZER (Based on the SpUNet example) ---
+# SGD with momentum: the standard optimizer for SparseUNet in Pointcept
 optimizer = dict(type="SGD", lr=0.1, momentum=0.9, weight_decay=0.0001, nesterov=True)
 scheduler = dict(type="PolyLR")
 
-# --- MÉTODOS ---
+# --- METHODS ---
 train = dict(type='DefaultTrainer')
 test = dict(type='InsSegTester', verbose=True)
 
-# --- MODELO (SpUNet-v1m1 + PointGroup) ---
+# --- MODEL (SpUNet-v1m1 + PointGroup) ---
 model = dict(
     type='PG-v1m2', 
     backbone=dict(
         type='SpUNet-v1m1',
-        in_channels=6,      # XYZ + Intensidad
-        num_classes=0,      # En SpUNet, 0 indica que solo queremos extraer rasgos
-        channels=(32, 64, 128, 256, 256, 128, 96, 96), # Configuración ScanNet
-        layers=(2, 3, 4, 6, 2, 2, 2, 2),               # Profundidad por nivel
+        in_channels=6,      # XYZ + Intensity
+        num_classes=0,      # 0 means feature extraction only (no classifier head) in SpUNet
+        channels=(32, 64, 128, 256, 256, 128, 96, 96), # ScanNet configuration
+        layers=(2, 3, 4, 6, 2, 2, 2, 2),               # Depth per level
     ),
-    backbone_out_channels=96, #DEBE coincidir con el último valor de 'channels'
+    backbone_out_channels=96, # Must match the last value in 'channels'
     semantic_num_classes=2,
     semantic_ignore_index=-1,
     segment_ignore_index=(0,),  
     instance_ignore_index=-1,
     
     voxel_size=0.05,
-    cluster_thresh=2.0,           # Radio de 10 cm (Muy estricto, ideal para evitar fusiones)
-    cluster_min_points=120,       # Subimos un poco: obliga a que los grupos sean más densos
+    cluster_thresh=2.0,           # 10 cm radius (very strict, avoids over-merging)
+    cluster_min_points=120,       # Raised slightly: forces denser clusters
     
     criteria=[
         dict(type='CrossEntropyLoss', loss_weight=1.0, ignore_index=-1, weight=[1.0, 1.0]),
@@ -56,7 +56,7 @@ model = dict(
     ]
 )
 
-# --- DATOS ---
+# --- DATA ---
 data_root = 'data/tree_assets'
 data = dict(
     num_classes=2,
@@ -125,7 +125,7 @@ data = dict(
 test = dict(
     type="InsSegTester",
     verbose=True,
-    segment_ignore_index=[0],   # Usamos corchetes para que sea una lista iterable
+    segment_ignore_index=[0],   # Square brackets make it a proper iterable
     instance_ignore_index=-1
 )
 
@@ -137,7 +137,7 @@ hooks = [
     dict(
         type='InsSegTester', 
         verbose=True,
-        # 0 es el índice del fondo/background tras el MapIndex
+        # 0 is the background index after MapIndex
         segment_ignore_index=(0,), 
         instance_ignore_index=-1 
         ),
