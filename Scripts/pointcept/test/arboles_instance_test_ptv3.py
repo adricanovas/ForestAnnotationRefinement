@@ -74,8 +74,8 @@ model = dict(
 
     # Post-processing for Voxel 0.05
     voxel_size=0.05,
-    cluster_thresh=3.0,           # 10 cm radius (very strict, avoids over-merging)
-    cluster_min_points=900,       # Raised slightly: forces denser clusters
+    cluster_thresh=2.0,          
+    cluster_min_points=120,     
     
     criteria=[
         dict(type='CrossEntropyLoss', loss_weight=1.0, ignore_index=-1, weight=[1.0, 1.0]),
