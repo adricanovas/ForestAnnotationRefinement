@@ -387,10 +387,10 @@ bash Scripts/pointcept/run_scripts/run_spunet.sh
 If you use this code or dataset, please cite:
 
 ```bibtex
-@inproceedings{canovas2025forestvolumeseg,
+@inproceedings{canovas2026ForestAnnotationRefinement,
   title     = {Impact of Manual Annotation Refinement on Instance Segmentation Accuracy
                in UAV-LiDAR-Based Forest Inventories},
-  author    = {Canovas-Rodriguez, Adri\'{a}n and Carmona-Martinez, Guillermo and
+  author    = {Canovas-Rodriguez, Adrian and Carmona-Martinez, Guillermo and
                Gonzalez-Vidal, Aurora and Skarmeta, Antonio},
   booktitle = {},
   year      = {2025}
